@@ -70,30 +70,62 @@ export const useApply = create<ApplyState>((set, get) => ({
 
   start: async () => {
     if (get().running) return;
+    set({ lastError: null, events: [] });
+    console.log('[apply] Start clicked');
+
+    // Health check the server first so errors are actionable
+    try {
+      const h = await fetch('/api/health');
+      if (!h.ok) throw new Error(`Server returned ${h.status}`);
+    } catch (err) {
+      set({
+        lastError: `Backend not reachable — run "npm run dev" and refresh. (${err instanceof Error ? err.message : 'fetch failed'})`,
+      });
+      console.error('[apply] server down:', err);
+      return;
+    }
+
     get()._attachStream();
 
     const approved = await db.matches.where('status').equals('approved').toArray();
     const jobs = await db.jobs.bulkGet(approved.map((m) => m.job_id));
-    const items = approved
-      .map((m, i) => ({ m, j: jobs[i] }))
+    const all = approved.map((m, i) => ({ m, j: jobs[i] }));
+    const missingJob = all.filter((x) => !x.j);
+    const wrongPortal = all.filter((x) => x.j && x.j.portal !== 'naukri');
+    const items = all
       .filter((x): x is { m: Match; j: NonNullable<typeof x.j> } => !!x.j && x.j.portal === 'naukri')
-      .map(({ m, j }) => ({
+      .map(({ j }) => ({
         job_id: j.id,
         job_url: j.job_url,
         job_title: j.title,
         portal: 'naukri' as const,
       }));
 
+    console.log('[apply] queue breakdown:', {
+      approved: approved.length,
+      missingJob: missingJob.length,
+      wrongPortal: wrongPortal.length,
+      toApply: items.length,
+    });
+
     if (items.length === 0) {
-      set({ lastError: 'No Naukri jobs in queue. (Other portals aren’t wired yet.)' });
+      const msg =
+        wrongPortal.length > 0
+          ? `${wrongPortal.length} approved job(s) are from portals other than Naukri. Only Naukri is wired up for auto-apply right now.`
+          : missingJob.length > 0
+            ? `Approved jobs are missing their Job records in local DB. Re-scrape jobs.`
+            : 'No approved jobs found.';
+      set({ lastError: msg });
       return;
     }
 
-    set({ running: true, paused: false, processed: 0, lastError: null });
+    set({ running: true, paused: false, processed: 0, queueSize: items.length, lastError: null });
     try {
-      await api.startApply(items);
+      const res = await api.startApply(items);
+      console.log('[apply] backend accepted:', res);
     } catch (err) {
       set({ running: false, lastError: err instanceof Error ? err.message : 'start failed' });
+      console.error('[apply] start failed:', err);
     }
   },
 

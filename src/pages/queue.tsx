@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Zap } from 'lucide-react';
+import { AlertTriangle, Zap } from 'lucide-react';
 import { db } from '@/lib/db/dexie';
 import { ApplyProgress } from '@/components/apply/apply-progress';
 import { JobCard } from '@/components/jobs/job-card';
@@ -12,7 +12,7 @@ export default function QueuePage() {
   const matches = useLiveQuery(() => db.matches.toArray(), []) ?? [];
   const jobs = useLiveQuery(() => db.jobs.toArray(), []) ?? [];
   const jobMap = useMemo(() => new Map(jobs.map((j) => [j.id, j])), [jobs]);
-  const { start, running } = useApply();
+  const { start, running, lastError, events } = useApply();
 
   const approved = matches
     .filter((m) => m.status === 'approved')
@@ -32,6 +32,27 @@ export default function QueuePage() {
       </div>
 
       <ApplyProgress />
+
+      {lastError && (
+        <div className="card p-3 bg-rose-50 border-rose-200 text-rose-900 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <p className="text-xs">{lastError}</p>
+        </div>
+      )}
+
+      {events.length > 0 && (
+        <div className="card p-3 max-h-60 overflow-y-auto">
+          <p className="text-[11px] uppercase tracking-wider text-ink-400 mb-2">Activity</p>
+          <ul className="space-y-1 text-xs">
+            {events.slice(-30).reverse().map((e, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="chip-ink capitalize shrink-0">{String(e.type).replace('_', ' ')}</span>
+                <span className="text-ink-600 truncate">{e.message ?? e.job_title ?? ''}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {approved.length === 0 ? (
         <Empty
