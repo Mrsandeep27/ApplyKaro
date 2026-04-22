@@ -1,7 +1,10 @@
+import path from 'node:path';
+import fs from 'node:fs';
 import type { Browser, Page } from 'puppeteer';
 import { launchBrowser, connectPortal } from './session.js';
 import { randSleep, PAGE_LOAD_MS, BEFORE_CLICK_MS } from '../lib/delays.js';
 import { bus } from '../lib/events.js';
+import { SCREENSHOTS_DIR } from '../lib/paths.js';
 
 export const NAUKRI = {
   slug: 'naukri',
@@ -156,6 +159,9 @@ export interface ApplyResult {
   duration_ms: number;
 }
 
+// Static mount point for screenshots, exposed via /api/screenshots/naukri/*
+export { SCREENSHOTS_DIR };
+
 export async function applyToNaukri(
   jobUrl: string,
   onEvent?: (partial: { type: string; message?: string; screenshot?: string }) => void,
@@ -174,16 +180,54 @@ export async function applyToNaukri(
     await randSleep(PAGE_LOAD_MS);
     await dismissOverlays(page);
 
-    // CAPTCHA / bot-check detection
-    const html = await page.content();
-    if (/captcha|recaptcha|unusual activity|verify you are human/i.test(html)) {
-      onEvent?.({ type: 'captcha', message: 'Challenge detected — pausing portal' });
-      return { job_url: jobUrl, status: 'captcha', duration_ms: Date.now() - start, message: 'Challenge detected' };
+    const shotDir = path.join(SCREENSHOTS_DIR, 'naukri');
+    fs.mkdirSync(shotDir, { recursive: true });
+    const shotPath = path.join(shotDir, `${Date.now()}.png`);
+    try {
+      await page.screenshot({ path: shotPath as `${string}.png`, fullPage: false });
+    } catch {
+      // non-fatal
+    }
+
+    // CAPTCHA / bot-check detection — look at the URL and VISIBLE page text, not raw HTML
+    // (raw HTML always contains "recaptcha" as part of Google script references even on clean pages)
+    const currentUrl = page.url();
+    const visibleText = await page.evaluate(() => document.body?.innerText ?? '').catch(() => '');
+    const urlHit = /captcha|challenge|block|denied/i.test(currentUrl);
+    const textHit =
+      /please verify you are (a )?human|unusual activity|to continue, (please )?complete/i.test(
+        visibleText,
+      ) ||
+      /^\s*Access Denied/i.test(visibleText) ||
+      /You have been blocked/i.test(visibleText);
+    if (urlHit || textHit) {
+      onEvent?.({
+        type: 'captcha',
+        message: `Challenge on ${currentUrl} · screenshot saved`,
+      });
+      // Keep the browser open briefly so the user can see & screenshot it themselves
+      await new Promise((r) => setTimeout(r, 12_000));
+      return {
+        job_url: jobUrl,
+        status: 'captcha',
+        duration_ms: Date.now() - start,
+        message: 'Challenge detected',
+        screenshot: shotPath,
+      };
     }
 
     const applyBtn = await findApplyButton(page);
     if (!applyBtn) {
-      return { job_url: jobUrl, status: 'skipped', message: 'Apply button not found', duration_ms: Date.now() - start };
+      // Keep browser open briefly so user can inspect
+      onEvent?.({ type: 'skipped', message: `Apply button not found on ${currentUrl}` });
+      await new Promise((r) => setTimeout(r, 8_000));
+      return {
+        job_url: jobUrl,
+        status: 'skipped',
+        message: `Apply button not found on ${currentUrl}`,
+        duration_ms: Date.now() - start,
+        screenshot: shotPath,
+      };
     }
 
     onEvent?.({ type: 'form_detected' });

@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
-import { ensureDataDirs } from './lib/paths.js';
+import { ensureDataDirs, SCREENSHOTS_DIR } from './lib/paths.js';
 import { portalsRouter } from './routes/portals.js';
 import { jobsRouter } from './routes/jobs.js';
 import { applyRouter } from './routes/apply.js';
@@ -24,6 +24,7 @@ app.use('/api/state', stateRouter);
 app.use('/api/portals', portalsRouter);
 app.use('/api/jobs', jobsRouter);
 app.use('/api/apply', applyRouter);
+app.use('/api/screenshots', express.static(SCREENSHOTS_DIR));
 
 // Global error handler — logs real stack + returns JSON so the client can read it
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
