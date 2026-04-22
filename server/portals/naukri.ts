@@ -216,9 +216,8 @@ export async function applyToNaukri(
       };
     }
 
-    const applyBtn = await findApplyButton(page);
-    if (!applyBtn) {
-      // Keep browser open briefly so user can inspect
+    const applyInfo = await findApplyButton(page);
+    if (!applyInfo) {
       onEvent?.({ type: 'skipped', message: `Apply button not found on ${currentUrl}` });
       await new Promise((r) => setTimeout(r, 8_000));
       return {
@@ -230,47 +229,69 @@ export async function applyToNaukri(
       };
     }
 
-    onEvent?.({ type: 'form_detected' });
-    await randSleep(BEFORE_CLICK_MS);
-    await (applyBtn as unknown as { click: () => Promise<void> }).click();
-    await randSleep(PAGE_LOAD_MS);
+    const { handle: applyBtn, text: btnText } = applyInfo;
 
-    // If an "Already Applied" indicator appears, call it out
-    const already = await page.$eval('body', (b) =>
-      /already applied|you have applied|application sent/i.test(b.innerText),
-    ).catch(() => false);
-    if (already) {
+    // If the button already says "Applied", skip
+    if (/\bapplied\b/i.test(btnText) && !/\bapply\b/i.test(btnText)) {
+      onEvent?.({ type: 'skipped', message: 'Already applied' });
       return { job_url: jobUrl, status: 'already_applied', duration_ms: Date.now() - start };
     }
 
-    // Naukri may show a chat-style "chatbot-divBase" flow with follow-up questions.
-    // For MVP we skip any jobs that require additional answers and rely on Naukri's
-    // auto-fill from the saved profile.
-    const chatbot = await page.$('.chatbot-divBase, #chatbot_Drawer');
-    if (chatbot) {
-      onEvent?.({ type: 'skipped', message: 'Employer questions required — skipped' });
-      return { job_url: jobUrl, status: 'skipped', message: 'Employer questions required', duration_ms: Date.now() - start };
+    onEvent?.({ type: 'form_detected', message: `Button: "${btnText}"` });
+    await randSleep(BEFORE_CLICK_MS);
+    await (applyBtn as unknown as { click: () => Promise<void> }).click();
+
+    // Wait up to 15s for one of the known post-apply outcomes instead of a fixed 2-5s sleep
+    const outcome = await waitForApplyOutcome(page, 15_000);
+    const afterShot = path.join(shotDir, `${Date.now()}-after.png`);
+    try {
+      await page.screenshot({ path: afterShot as `${string}.png`, fullPage: false });
+    } catch {
+      // non-fatal
     }
 
-    onEvent?.({ type: 'submitted' });
-    // Look for confirmation toast/message
-    await randSleep(PAGE_LOAD_MS);
-    const confirmed = await page.evaluate(() => {
-      const body = document.body.innerText.toLowerCase();
-      return /you have successfully applied|application sent|successfully submitted/.test(body);
-    });
-
-    if (!confirmed) {
-      // Some apply flows just show a disabled "Applied" state on the button — check it
-      const appliedState = await page.$eval('body', (b) =>
-        /\bapplied\b/i.test(b.innerText),
-      ).catch(() => false);
-      if (!appliedState) {
-        return { job_url: jobUrl, status: 'skipped', message: 'No confirmation detected', duration_ms: Date.now() - start };
-      }
+    if (outcome.type === 'chatbot') {
+      onEvent?.({ type: 'skipped', message: 'Employer questions (chatbot) — skipped' });
+      await new Promise((r) => setTimeout(r, 6_000));
+      return {
+        job_url: jobUrl,
+        status: 'skipped',
+        message: 'Employer questions required',
+        duration_ms: Date.now() - start,
+        screenshot: afterShot,
+      };
     }
 
-    return { job_url: jobUrl, status: 'applied', duration_ms: Date.now() - start };
+    if (outcome.type === 'already') {
+      onEvent?.({ type: 'skipped', message: 'Already applied' });
+      return { job_url: jobUrl, status: 'already_applied', duration_ms: Date.now() - start, screenshot: afterShot };
+    }
+
+    if (outcome.type === 'applied') {
+      onEvent?.({ type: 'submitted', message: outcome.evidence });
+      return { job_url: jobUrl, status: 'applied', duration_ms: Date.now() - start, screenshot: afterShot };
+    }
+
+    if (outcome.type === 'redirect') {
+      onEvent?.({ type: 'skipped', message: `Redirected to company site: ${outcome.evidence}` });
+      return {
+        job_url: jobUrl,
+        status: 'skipped',
+        message: `External apply at ${outcome.evidence}`,
+        duration_ms: Date.now() - start,
+        screenshot: afterShot,
+      };
+    }
+
+    onEvent?.({ type: 'skipped', message: 'No confirmation detected after click' });
+    await new Promise((r) => setTimeout(r, 8_000));
+    return {
+      job_url: jobUrl,
+      status: 'skipped',
+      message: 'No confirmation after submit — check screenshot',
+      duration_ms: Date.now() - start,
+      screenshot: afterShot,
+    };
   } catch (err) {
     return {
       job_url: jobUrl,
@@ -289,29 +310,89 @@ export async function applyToNaukri(
   }
 }
 
-async function findApplyButton(page: Page) {
-  // Try a few Naukri button variants (their markup changes often)
-  const selectors = [
-    '#apply-button',
-    'button.apply-button',
-    'button#job-apply-button',
-    'button[id*="apply"]',
-    'button.styles_btn-primary__JZ9fa',
-    'a.apply-button',
-  ];
-  for (const sel of selectors) {
-    const el = await page.$(sel);
-    if (el) return el;
-  }
-  // Last-resort: scan for a button containing "Apply"
-  const handle = await page.evaluateHandle(() => {
-    const all = Array.from(document.querySelectorAll('button, a'));
-    return all.find(
-      (el) =>
-        /\b(apply|easy apply)\b/i.test((el.textContent || '').trim()) &&
-        !/applied/i.test((el.textContent || '').trim()),
-    );
+async function findApplyButton(page: Page): Promise<{ handle: unknown; text: string } | null> {
+  // Last-resort first: scan for a button/link whose visible text is "Apply" — most robust
+  // since Naukri changes class names often.
+  const picked = await page.evaluate(() => {
+    const clickable = Array.from(document.querySelectorAll('button, a, [role="button"], [onclick]'));
+    for (const el of clickable) {
+      const t = (el.textContent || '').trim();
+      if (!t || t.length > 40) continue;
+      // Reject negative matches first
+      if (/apply\s*(filter|coupon|now\s*on\s*company)/i.test(t)) continue;
+      if (/\bapplied\b/i.test(t) && !/\bapply\b/i.test(t)) {
+        return { text: t, selector: buildSelector(el) };
+      }
+      if (/^\s*(apply|easy apply|quick apply|apply now)\s*$/i.test(t)) {
+        return { text: t, selector: buildSelector(el) };
+      }
+    }
+    return null;
+
+    function buildSelector(el: Element): string {
+      if (el.id) return `#${CSS.escape(el.id)}`;
+      const classes = Array.from(el.classList).map((c) => `.${CSS.escape(c)}`).join('');
+      return (el.tagName.toLowerCase() + classes) || el.tagName.toLowerCase();
+    }
   });
-  const element = handle.asElement();
-  return element || null;
+
+  if (!picked) return null;
+  const handle = await page.$(picked.selector).catch(() => null);
+  if (!handle) {
+    // Fallback: grab by text via evaluateHandle
+    const h = await page.evaluateHandle((txt) => {
+      return Array.from(document.querySelectorAll('button, a, [role="button"]')).find(
+        (el) => (el.textContent || '').trim() === txt,
+      );
+    }, picked.text);
+    const el = h.asElement();
+    return el ? { handle: el, text: picked.text } : null;
+  }
+  return { handle, text: picked.text };
+}
+
+type ApplyOutcome =
+  | { type: 'applied'; evidence: string }
+  | { type: 'already'; evidence: string }
+  | { type: 'chatbot'; evidence: string }
+  | { type: 'redirect'; evidence: string }
+  | { type: 'unknown'; evidence: string };
+
+async function waitForApplyOutcome(page: Page, timeoutMs: number): Promise<ApplyOutcome> {
+  const deadline = Date.now() + timeoutMs;
+  const startUrl = page.url();
+  while (Date.now() < deadline) {
+    const snap = await page
+      .evaluate(() => {
+        const body = document.body?.innerText ?? '';
+        const chatbot = document.querySelector(
+          '.chatbot-divBase, #chatbot_Drawer, [class*="chatbot"], [class*="questionBot"]',
+        );
+        const btn = Array.from(document.querySelectorAll('button, a')).find((el) => {
+          const t = (el.textContent || '').trim();
+          return /^\s*applied\s*$/i.test(t);
+        });
+        return {
+          body: body.slice(0, 4000),
+          hasChatbot: !!chatbot,
+          appliedBtn: btn ? (btn.textContent || '').trim() : null,
+          url: window.location.href,
+        };
+      })
+      .catch(() => ({ body: '', hasChatbot: false, appliedBtn: null, url: startUrl }));
+
+    if (snap.hasChatbot) return { type: 'chatbot', evidence: 'chatbot drawer visible' };
+    if (snap.appliedBtn) return { type: 'applied', evidence: `button text: ${snap.appliedBtn}` };
+    if (/you have successfully applied|application sent|applied successfully/i.test(snap.body)) {
+      return { type: 'applied', evidence: 'success toast detected' };
+    }
+    if (/you have already applied|already applied/i.test(snap.body)) {
+      return { type: 'already', evidence: 'already-applied notice' };
+    }
+    if (snap.url !== startUrl && !snap.url.includes('naukri.com')) {
+      return { type: 'redirect', evidence: snap.url };
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return { type: 'unknown', evidence: 'timed out waiting for outcome' };
 }
