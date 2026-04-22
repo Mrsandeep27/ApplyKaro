@@ -36,6 +36,10 @@ class ApplyKaroDB extends Dexie {
       preferences: 'id',
       settings: 'key',
     });
+    // v2: index applications.updated_at so the tracker can sort by recency
+    this.version(2).stores({
+      applications: 'id, job_id, status, applied_at, created_at, updated_at',
+    });
   }
 }
 

@@ -11,6 +11,7 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'robots.txt'],
+      devOptions: { enabled: false },
       manifest: {
         name: 'ApplyKaro — Smart Job Auto-Apply',
         short_name: 'ApplyKaro',
