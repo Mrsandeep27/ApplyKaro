@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowRight, Sparkles, Zap } from 'lucide-react';
+import { ArrowRight, FileText, Sparkles, Zap } from 'lucide-react';
 import { db } from '@/lib/db/dexie';
 import { StatsRow } from '@/components/apply/stats-row';
 import { ApplyProgress } from '@/components/apply/apply-progress';
@@ -16,6 +16,7 @@ export default function DashboardPage() {
   const matches = useLiveQuery(() => db.matches.toArray(), []) ?? [];
   const jobs = useLiveQuery(() => db.jobs.toArray(), []) ?? [];
   const apps = useLiveQuery(() => db.applications.toArray(), []) ?? [];
+  const resumeCount = useLiveQuery(() => db.resumes.count(), []) ?? 0;
 
   const topMatches = useMemo(() => {
     const threshold = prefs?.match_threshold ?? 70;
@@ -59,6 +60,22 @@ export default function DashboardPage() {
       </section>
 
       <StatsRow stats={stats} />
+
+      {resumeCount === 0 && (
+        <Link
+          to="/resume"
+          className="card p-4 flex items-center gap-3 bg-gradient-to-br from-amber-50 to-rose-50 border-amber-100 hover:brightness-95 transition"
+        >
+          <div className="w-10 h-10 rounded-xl bg-white grid place-items-center text-amber-600 shrink-0 shadow">
+            <FileText className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">Upload your resume</p>
+            <p className="text-xs text-ink-500">Required for AI matching and auto-apply</p>
+          </div>
+          <ArrowRight className="w-4 h-4 text-ink-500" />
+        </Link>
+      )}
 
       <ApplyProgress />
 

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { LogOut } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { ChevronRight, FileText, LogOut } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { db } from '@/lib/db/dexie';
 import { Input, Label } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -13,6 +15,11 @@ export default function SettingsPage() {
   const { prefs, update } = usePreferences();
   const { signOut, user } = useAuth();
   const [local, setLocal] = useState(prefs);
+  const defaultResume = useLiveQuery(
+    () => db.resumes.filter((r) => r.is_default === true).first(),
+    [],
+  );
+  const resumeCount = useLiveQuery(() => db.resumes.count(), []) ?? 0;
 
   useEffect(() => setLocal(prefs), [prefs]);
 
@@ -36,6 +43,29 @@ export default function SettingsPage() {
             <LogOut className="w-4 h-4" /> Sign out
           </Button>
         </div>
+      </section>
+
+      <section>
+        <SectionTitle>Resume</SectionTitle>
+        <Link
+          to="/resume"
+          className="card p-4 flex items-center gap-3 hover:bg-ink-50 transition"
+        >
+          <div className="w-10 h-10 rounded-xl bg-brand-50 grid place-items-center text-brand-600 shrink-0">
+            <FileText className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">
+              {resumeCount === 0 ? 'Upload resume' : defaultResume?.name ?? 'Manage resumes'}
+            </p>
+            <p className="text-xs text-ink-500">
+              {resumeCount === 0
+                ? 'Required for AI matching and auto-apply'
+                : `${resumeCount} resume${resumeCount > 1 ? 's' : ''} · ${defaultResume?.parsed_data.skills.length ?? 0} skills extracted`}
+            </p>
+          </div>
+          <ChevronRight className="w-4 h-4 text-ink-400" />
+        </Link>
       </section>
 
       <section>
