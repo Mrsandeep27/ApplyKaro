@@ -218,12 +218,27 @@ export async function applyToNaukri(
 
     const applyInfo = await findApplyButton(page);
     if (!applyInfo) {
-      onEvent?.({ type: 'skipped', message: `Apply button not found on ${currentUrl}` });
-      await new Promise((r) => setTimeout(r, 8_000));
+      // Dump candidates found on the page so we know what to match against next time
+      const diag = await page.evaluate(() => {
+        const all = Array.from(document.querySelectorAll<HTMLElement>('*'));
+        const cands: string[] = [];
+        for (const el of all) {
+          const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+          if (!t || t.length > 60) continue;
+          if (/apply|applied/i.test(t) && cands.length < 20) {
+            const tag = el.tagName.toLowerCase();
+            cands.push(`${tag}: "${t}"`);
+          }
+        }
+        return cands;
+      });
+      const diagMsg = diag.length ? ` · apply-text on page: ${diag.slice(0, 5).join(' | ')}` : '';
+      onEvent?.({ type: 'skipped', message: `Apply button not found.${diagMsg}` });
+      await new Promise((r) => setTimeout(r, 10_000));
       return {
         job_url: jobUrl,
         status: 'skipped',
-        message: `Apply button not found on ${currentUrl}`,
+        message: `Apply button not found on ${currentUrl}${diagMsg}`,
         duration_ms: Date.now() - start,
         screenshot: shotPath,
       };
@@ -310,45 +325,81 @@ export async function applyToNaukri(
   }
 }
 
-async function findApplyButton(page: Page): Promise<{ handle: unknown; text: string } | null> {
-  // Last-resort first: scan for a button/link whose visible text is "Apply" — most robust
-  // since Naukri changes class names often.
-  const picked = await page.evaluate(() => {
-    const clickable = Array.from(document.querySelectorAll('button, a, [role="button"], [onclick]'));
-    for (const el of clickable) {
-      const t = (el.textContent || '').trim();
-      if (!t || t.length > 40) continue;
-      // Reject negative matches first
-      if (/apply\s*(filter|coupon|now\s*on\s*company)/i.test(t)) continue;
-      if (/\bapplied\b/i.test(t) && !/\bapply\b/i.test(t)) {
-        return { text: t, selector: buildSelector(el) };
-      }
-      if (/^\s*(apply|easy apply|quick apply|apply now)\s*$/i.test(t)) {
-        return { text: t, selector: buildSelector(el) };
-      }
-    }
-    return null;
+async function findApplyButton(
+  page: Page,
+): Promise<{ handle: unknown; text: string; candidates: string[] } | null> {
+  // Scan broadly — Naukri often uses <div>/<span> with onclick handlers instead of <button>.
+  // We look for any leaf-ish clickable whose visible text is close to "Apply".
+  const found = await page.evaluate(() => {
+    const isVisible = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      if (r.width < 10 || r.height < 10) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) < 0.3)
+        return false;
+      return true;
+    };
 
-    function buildSelector(el: Element): string {
-      if (el.id) return `#${CSS.escape(el.id)}`;
-      const classes = Array.from(el.classList).map((c) => `.${CSS.escape(c)}`).join('');
-      return (el.tagName.toLowerCase() + classes) || el.tagName.toLowerCase();
+    const all = Array.from(document.querySelectorAll<HTMLElement>('*'));
+    const matches: { text: string; tag: string; cls: string; index: number }[] = [];
+    const candidates: string[] = [];
+
+    for (let i = 0; i < all.length; i++) {
+      const el = all[i];
+      if (!isVisible(el)) continue;
+
+      // Only consider elements that look clickable in some way
+      const tag = el.tagName.toLowerCase();
+      const looksClickable =
+        tag === 'button' ||
+        tag === 'a' ||
+        el.getAttribute('role') === 'button' ||
+        el.hasAttribute('onclick') ||
+        window.getComputedStyle(el).cursor === 'pointer';
+      if (!looksClickable) continue;
+
+      const raw = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!raw || raw.length > 80) continue;
+
+      // Capture a sample of "apply-ish" texts for diagnostics
+      if (/apply|applied/i.test(raw) && candidates.length < 15) {
+        candidates.push(`${tag}: "${raw.slice(0, 60)}"`);
+      }
+
+      // Reject obvious non-matches
+      if (/apply\s*(filter|filters|coupon|now on company)/i.test(raw)) continue;
+      if (/send me jobs/i.test(raw)) continue;
+
+      // Accept "Applied" standalone → already applied
+      if (/^\s*applied\s*$/i.test(raw)) {
+        matches.push({ text: raw, tag, cls: el.className || '', index: i });
+      }
+      // Accept Apply / Easy Apply / Quick Apply / Apply now (with possible icons/whitespace)
+      else if (/^(apply|easy\s*apply|quick\s*apply|apply\s*now)$/i.test(raw)) {
+        matches.push({ text: raw, tag, cls: el.className || '', index: i });
+      }
     }
+
+    // Prefer the smallest element (innermost, closest to the actual click target)
+    if (matches.length > 0) {
+      matches.sort((a, b) => b.index - a.index); // later in DOM = likely more inner
+      const best = matches[0];
+      // Return a stable-ish path to re-fetch as a handle
+      const el = all[best.index];
+      const marker = `__ak_apply_btn_${Date.now()}`;
+      el.setAttribute('data-ak-marker', marker);
+      return { text: best.text, marker, candidates };
+    }
+
+    return { text: null, marker: null, candidates };
   });
 
-  if (!picked) return null;
-  const handle = await page.$(picked.selector).catch(() => null);
-  if (!handle) {
-    // Fallback: grab by text via evaluateHandle
-    const h = await page.evaluateHandle((txt) => {
-      return Array.from(document.querySelectorAll('button, a, [role="button"]')).find(
-        (el) => (el.textContent || '').trim() === txt,
-      );
-    }, picked.text);
-    const el = h.asElement();
-    return el ? { handle: el, text: picked.text } : null;
-  }
-  return { handle, text: picked.text };
+  if (!found.marker || !found.text) return null;
+
+  const handle = await page.$(`[data-ak-marker="${found.marker}"]`);
+  if (!handle) return null;
+
+  return { handle, text: found.text, candidates: found.candidates };
 }
 
 type ApplyOutcome =
