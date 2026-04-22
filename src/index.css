@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Disable automatic OS-based dark mode — dark: utilities now require a .dark class on the tree. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-brand-50: oklch(0.97 0.02 230);
   --color-brand-100: oklch(0.93 0.04 230);
@@ -29,19 +32,15 @@
 }
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 }
-html, body, #root { height: 100%; }
+html, body, #root { height: 100%; background: var(--color-ink-50); }
 body {
   background: var(--color-ink-50);
   color: var(--color-ink-900);
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
-}
-.dark body {
-  background: var(--color-ink-950);
-  color: var(--color-ink-100);
 }
 *:focus-visible {
   outline: 2px solid var(--color-brand-500);
@@ -56,10 +55,6 @@ body {
   background: white;
   border: 1px solid var(--color-ink-100);
   box-shadow: var(--shadow-card);
-}
-.dark .card {
-  background: var(--color-ink-900);
-  border-color: var(--color-ink-800);
 }
 
 .btn {
@@ -85,13 +80,9 @@ body {
 
 .btn-ghost { background: transparent; color: var(--color-ink-800); }
 .btn-ghost:hover { background: var(--color-ink-100); }
-.dark .btn-ghost { color: var(--color-ink-100); }
-.dark .btn-ghost:hover { background: var(--color-ink-800); }
 
 .btn-outline { background: transparent; border: 1px solid var(--color-ink-200); color: inherit; }
 .btn-outline:hover { background: var(--color-ink-100); }
-.dark .btn-outline { border-color: var(--color-ink-700); }
-.dark .btn-outline:hover { background: var(--color-ink-800); }
 
 .input {
   width: 100%;
@@ -109,7 +100,6 @@ body {
   border-color: var(--color-brand-500);
   box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-brand-500) 20%, transparent);
 }
-.dark .input { background: var(--color-ink-900); border-color: var(--color-ink-700); }
 
 .chip {
   display: inline-flex;
@@ -141,10 +131,6 @@ body {
 .chip-red { background: #fff1f2; color: #be123c; }
 .chip-blue { background: #f0f9ff; color: #0369a1; }
 .chip-ink { background: var(--color-ink-100); color: var(--color-ink-700); }
-.dark .chip-green { background: color-mix(in oklch, #10b981 25%, transparent); color: #6ee7b7; }
-.dark .chip-red { background: color-mix(in oklch, #f43f5e 25%, transparent); color: #fda4af; }
-.dark .chip-blue { background: color-mix(in oklch, #0ea5e9 25%, transparent); color: #7dd3fc; }
-.dark .chip-ink { background: var(--color-ink-800); color: var(--color-ink-200); }
 
 .scrollbar-none::-webkit-scrollbar { display: none; }
 .scrollbar-none { scrollbar-width: none; }
