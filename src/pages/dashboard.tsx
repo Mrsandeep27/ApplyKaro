@@ -73,10 +73,15 @@ export default function DashboardPage() {
         </div>
         <div className="space-y-3">
           {topMatches.length === 0 && (
-            <div className="card p-5 text-center">
-              <p className="text-sm text-ink-500">
-                Fetching jobs… check back in a few minutes. New matches appear automatically.
+            <div className="card p-5 text-center space-y-2">
+              <p className="text-sm font-medium">No matches yet</p>
+              <p className="text-xs text-ink-500">
+                Go to Jobs → tap the refresh button to scrape Naukri with Gemini-generated queries.
+                Connect Naukri first in Settings → Connected portals.
               </p>
+              <Link to="/jobs" className="btn-primary inline-flex mt-2">
+                Go to Jobs
+              </Link>
             </div>
           )}
           {topMatches.map((m) => {
