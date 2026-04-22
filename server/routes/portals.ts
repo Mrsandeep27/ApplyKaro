@@ -6,16 +6,32 @@ import { snapshot } from '../lib/safety.js';
 
 export const portalsRouter = Router();
 
-portalsRouter.get('/', (_req, res) => {
-  const state = loadState();
-  const portals = ['naukri', 'linkedin', 'indeed', 'internshala'].map((slug) => ({
-    slug,
-    connected: isConnected(slug),
-  }));
-  res.json({ portals, counters: snapshot(), connected: state.connected_portals ?? [] });
+portalsRouter.get('/', (_req, res, next) => {
+  try {
+    const state = loadState();
+    const slugs = ['naukri', 'linkedin', 'indeed', 'internshala'];
+    const portals = slugs.map((slug) => {
+      let connected = false;
+      try {
+        connected = isConnected(slug);
+      } catch (err) {
+        console.warn(`[portals] isConnected(${slug}) threw:`, err instanceof Error ? err.message : err);
+      }
+      return { slug, connected };
+    });
+    let counters: ReturnType<typeof snapshot> = {};
+    try {
+      counters = snapshot();
+    } catch (err) {
+      console.warn('[portals] snapshot() threw:', err instanceof Error ? err.message : err);
+    }
+    res.json({ portals, counters, connected: state.connected_portals ?? [] });
+  } catch (err) {
+    next(err);
+  }
 });
 
-portalsRouter.post('/:portal/connect', async (req, res) => {
+portalsRouter.post('/:portal/connect', async (req, res, next) => {
   const { portal } = req.params;
   try {
     let result;
@@ -34,14 +50,18 @@ portalsRouter.post('/:portal/connect', async (req, res) => {
     }
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : 'unknown error' });
+    next(err);
   }
 });
 
-portalsRouter.delete('/:portal', (req, res) => {
-  const { portal } = req.params;
-  forgetSession(portal);
-  const state = loadState();
-  saveState({ connected_portals: (state.connected_portals ?? []).filter((p) => p !== portal) });
-  res.json({ portal, forgotten: true });
+portalsRouter.delete('/:portal', (req, res, next) => {
+  try {
+    const { portal } = req.params;
+    forgetSession(portal);
+    const state = loadState();
+    saveState({ connected_portals: (state.connected_portals ?? []).filter((p) => p !== portal) });
+    res.json({ portal, forgotten: true });
+  } catch (err) {
+    next(err);
+  }
 });

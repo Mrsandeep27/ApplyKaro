@@ -14,22 +14,30 @@ export function PortalConnectList() {
   const [list, setList] = useState<PortalStatus[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [serverReady, setServerReady] = useState<boolean | null>(null);
+  const [serverReachable, setServerReachable] = useState<boolean | null>(null);
 
   async function refresh() {
     setError(null);
+    // Ping health first — distinguishes "server not running" from "server errored"
+    try {
+      const r = await fetch('/api/health');
+      setServerReachable(r.ok);
+      if (!r.ok) return;
+    } catch {
+      setServerReachable(false);
+      return;
+    }
     try {
       const data = await api.getPortals();
-      const next = data.portals.map((p) => ({
-        slug: p.slug,
-        connected: p.connected,
-        applied_today: data.counters[p.slug]?.applied ?? 0,
-      }));
-      setList(next);
-      setServerReady(true);
+      setList(
+        data.portals.map((p) => ({
+          slug: p.slug,
+          connected: p.connected,
+          applied_today: data.counters[p.slug]?.applied ?? 0,
+        })),
+      );
     } catch (err) {
-      setServerReady(false);
-      setError(err instanceof Error ? err.message : 'Server offline');
+      setError(err instanceof Error ? err.message : 'Unexpected error');
     }
   }
 
@@ -61,14 +69,14 @@ export function PortalConnectList() {
     }
   }
 
-  if (serverReady === false) {
+  if (serverReachable === false) {
     return (
       <div className="card p-4">
         <p className="text-xs text-ink-500">
-          Start the backend to connect portals: <code className="text-[11px]">npm run dev</code> (runs both
-          client + server).
+          Backend isn't running. Start both: <code className="text-[11px]">npm run dev</code>
+          (starts client + server together). Server should log{' '}
+          <code className="text-[11px]">listening on http://localhost:3001</code>.
         </p>
-        {error && <p className="text-[11px] text-rose-600 mt-1">{error}</p>}
       </div>
     );
   }

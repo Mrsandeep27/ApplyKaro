@@ -25,6 +25,15 @@ app.use('/api/portals', portalsRouter);
 app.use('/api/jobs', jobsRouter);
 app.use('/api/apply', applyRouter);
 
+// Global error handler — logs real stack + returns JSON so the client can read it
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error('[applykaro] unhandled error:', err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: msg });
+  }
+});
+
 const port = Number(process.env.PORT ?? 3001);
 app.listen(port, () => {
   console.log(`[applykaro] server listening on http://localhost:${port}`);
