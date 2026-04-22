@@ -19,3 +19,6 @@ dev.err.log
 coverage
 .turbo
 .code-review-graph
+
+# Local server state (Puppeteer sessions, rate-limit counters, screenshots)
+server/data/

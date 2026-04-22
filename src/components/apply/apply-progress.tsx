@@ -3,12 +3,13 @@ import { useApply } from '@/stores/apply-store';
 import { Button } from '@/components/ui/button';
 
 export function ApplyProgress() {
-  const { running, paused, queueSize, processed, pause, resume, stop, start } = useApply();
+  const { running, paused, queueSize, processed, pause, resume, stop, start, lastError, events } = useApply();
 
   if (!running && queueSize === 0 && processed === 0) return null;
 
   const total = queueSize + processed || 1;
   const pct = Math.round((processed / total) * 100);
+  const lastEvent = events[events.length - 1];
 
   return (
     <div className="card p-4 bg-gradient-to-br from-brand-50 to-indigo-50 dark:from-brand-900/30 dark:to-indigo-900/30 border-brand-100 dark:border-brand-900">
@@ -33,6 +34,12 @@ export function ApplyProgress() {
           style={{ width: `${pct}%` }}
         />
       </div>
+      {lastEvent?.message && (
+        <p className="text-[11px] text-ink-500 mb-2 truncate">· {lastEvent.message}</p>
+      )}
+      {lastError && (
+        <p className="text-[11px] text-rose-600 mb-2 truncate">⚠ {lastError}</p>
+      )}
       <div className="flex gap-2">
         {running ? (
           paused ? (

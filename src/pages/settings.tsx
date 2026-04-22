@@ -1,18 +1,17 @@
 import { useEffect, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { LogOut, Plus, Trash2 } from 'lucide-react';
-import { db, uid } from '@/lib/db/dexie';
+import { LogOut } from 'lucide-react';
+import { db } from '@/lib/db/dexie';
 import { Input, Label } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { PORTALS } from '@/constants/portals';
 import { usePreferences } from '@/stores/preference-store';
 import { useAuth } from '@/stores/auth-store';
-import type { PortalSlug, WorkType } from '@/lib/types';
+import { PortalConnectList } from '@/components/settings/portal-connect';
+import type { WorkType } from '@/lib/types';
 
 export default function SettingsPage() {
   const { prefs, update } = usePreferences();
   const { signOut, user } = useAuth();
-  const portals = useLiveQuery(() => db.portals.toArray(), []) ?? [];
   const [local, setLocal] = useState(prefs);
 
   useEffect(() => setLocal(prefs), [prefs]);
@@ -165,37 +164,7 @@ export default function SettingsPage() {
 
       <section>
         <SectionTitle>Connected portals</SectionTitle>
-        <div className="card p-4 space-y-2">
-          {portals.length === 0 && (
-            <p className="text-xs text-ink-400">Connect your portal accounts to enable auto-apply.</p>
-          )}
-          {portals.map((p) => (
-            <div key={p.id} className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium">{p.portal}</p>
-                <p className="text-xs text-ink-500">{p.email}</p>
-              </div>
-              <button
-                className="w-9 h-9 rounded-full hover:bg-rose-100 dark:hover:bg-rose-900/30 grid place-items-center text-rose-600"
-                onClick={() => db.portals.delete(p.id)}
-                aria-label="Remove portal"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
-          <ConnectPortalForm
-            onAdd={async (portal, email) => {
-              await db.portals.add({
-                id: uid('portal'),
-                portal: portal as PortalSlug,
-                email,
-                status: 'active',
-                daily_limit: local.daily_limits[portal] ?? 10,
-              });
-            }}
-          />
-        </div>
+        <PortalConnectList />
       </section>
 
       <section>
@@ -273,59 +242,3 @@ function ChipInput({
   );
 }
 
-function ConnectPortalForm({ onAdd }: { onAdd: (portal: string, email: string) => void }) {
-  const [portal, setPortal] = useState<string>(PORTALS[0].slug);
-  const [email, setEmail] = useState('');
-  const [open, setOpen] = useState(false);
-
-  if (!open) {
-    return (
-      <Button variant="outline" full onClick={() => setOpen(true)}>
-        <Plus className="w-4 h-4" /> Connect portal
-      </Button>
-    );
-  }
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!email) return;
-        onAdd(portal, email);
-        setEmail('');
-        setOpen(false);
-      }}
-      className="space-y-2 pt-2 border-t border-ink-100 dark:border-ink-800"
-    >
-      <select
-        value={portal}
-        onChange={(e) => setPortal(e.target.value)}
-        className="input"
-      >
-        {PORTALS.map((p) => (
-          <option key={p.slug} value={p.slug}>
-            {p.name}
-          </option>
-        ))}
-      </select>
-      <Input
-        type="email"
-        placeholder="Your portal email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        required
-      />
-      <p className="text-[10px] text-ink-400">
-        Passwords are encrypted server-side. We never store plaintext.
-      </p>
-      <div className="flex gap-2">
-        <Button type="button" variant="ghost" onClick={() => setOpen(false)} full>
-          Cancel
-        </Button>
-        <Button type="submit" full>
-          Save
-        </Button>
-      </div>
-    </form>
-  );
-}

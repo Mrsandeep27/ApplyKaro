@@ -1,22 +1,77 @@
 import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Search, Sliders } from 'lucide-react';
-import { db } from '@/lib/db/dexie';
+import { Briefcase, Loader2, RefreshCw, Search, Sliders } from 'lucide-react';
+import { db, uid } from '@/lib/db/dexie';
 import { JobCard } from '@/components/jobs/job-card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { PORTALS } from '@/constants/portals';
 import { Empty } from '@/components/ui/empty';
-import { Briefcase } from 'lucide-react';
+import { api } from '@/lib/api';
+import type { Job, Match, PortalSlug } from '@/lib/types';
 
 export default function JobsPage() {
   const [q, setQ] = useState('');
   const [portal, setPortal] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [scraping, setScraping] = useState(false);
+  const [scrapeResult, setScrapeResult] = useState<string | null>(null);
 
   const matches = useLiveQuery(() => db.matches.toArray(), []) ?? [];
   const jobs = useLiveQuery(() => db.jobs.toArray(), []) ?? [];
   const jobMap = useMemo(() => new Map(jobs.map((j) => [j.id, j])), [jobs]);
+
+  async function runScrape() {
+    setScraping(true);
+    setScrapeResult(null);
+    try {
+      const result = await api.scrapeJobs();
+      setScrapeResult(`Scraped ${result.found} · kept ${result.kept} ≥${result.threshold}%`);
+      // Pull the enriched job list and mirror into Dexie so the existing UI renders
+      const fresh = await api.getJobs();
+      for (const j of fresh.jobs) {
+        const exists = await db.jobs.get(j.id);
+        if (!exists) {
+          const job: Job = {
+            id: j.id,
+            portal: j.portal as PortalSlug,
+            portal_job_id: j.portal_job_id,
+            title: j.title,
+            company: j.company,
+            location: j.location,
+            salary_min: j.salary_min ?? null,
+            salary_max: j.salary_max ?? null,
+            description: j.description,
+            skills: j.skills,
+            job_url: j.job_url,
+            job_type: j.job_type,
+            scraped_at: j.scraped_at,
+          };
+          await db.jobs.add(job);
+          if (j.match) {
+            const m: Match = {
+              id: uid('m'),
+              user_id: 'local',
+              job_id: j.id,
+              resume_id: 'default',
+              score: j.match.score,
+              matching_skills: j.match.matching_skills,
+              missing_skills: j.match.missing_skills,
+              bonus_skills: j.match.bonus_skills,
+              reasoning: j.match.reasoning,
+              status: 'queued',
+              created_at: new Date().toISOString(),
+            };
+            await db.matches.add(m);
+          }
+        }
+      }
+    } catch (err) {
+      setScrapeResult(err instanceof Error ? err.message : 'Scrape failed');
+    } finally {
+      setScraping(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     return matches
@@ -46,7 +101,11 @@ export default function JobsPage() {
         <Button variant="outline" onClick={() => setShowFilters((v) => !v)} aria-label="Filters">
           <Sliders className="w-4 h-4" />
         </Button>
+        <Button onClick={runScrape} disabled={scraping} aria-label="Scrape jobs">
+          {scraping ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+        </Button>
       </div>
+      {scrapeResult && <p className="text-[11px] text-ink-500 px-1">{scrapeResult}</p>}
 
       {showFilters && (
         <div className="card p-3">

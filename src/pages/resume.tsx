@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Empty } from '@/components/ui/empty';
 import { parseResumeWithAI } from '@/lib/ai/resume-parser';
 import { geminiConfigured } from '@/lib/ai/gemini';
+import { extractTextFromFile } from '@/lib/pdf';
+import { api } from '@/lib/api';
 import type { Resume } from '@/lib/types';
 
 export default function ResumePage() {
@@ -18,7 +20,7 @@ export default function ResumePage() {
     setError(null);
     setBusy(true);
     try {
-      const text = await readAsText(file);
+      const text = await extractTextFromFile(file);
       const parsed = await parseResumeWithAI(text);
       const resume: Resume = {
         id: uid('resume'),
@@ -28,6 +30,14 @@ export default function ResumePage() {
         created_at: new Date().toISOString(),
       };
       await db.resumes.add(resume);
+      // Also sync to server so the apply worker can use it
+      if (resume.is_default) {
+        try {
+          await api.putResume(parsed);
+        } catch {
+          // Server may be offline — that's fine, PWA still works
+        }
+      }
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'Upload failed');
@@ -41,6 +51,14 @@ export default function ResumePage() {
       await db.resumes.toCollection().modify({ is_default: false });
       await db.resumes.update(id, { is_default: true });
     });
+    const r = await db.resumes.get(id);
+    if (r) {
+      try {
+        await api.putResume(r.parsed_data);
+      } catch {
+        // server offline — ok
+      }
+    }
   };
 
   return (
@@ -156,13 +174,3 @@ function ResumeCard({ resume, onDefault }: { resume: Resume; onDefault: (id: str
   );
 }
 
-async function readAsText(file: File): Promise<string> {
-  // MVP: reads raw text. For PDF/DOCX, a real parser (pdf.js/mammoth) would be wired here.
-  if (file.type === 'application/pdf' || /\.(pdf|docx?)$/i.test(file.name)) {
-    // Fall back to best-effort text extraction
-    const buf = await file.arrayBuffer();
-    const dec = new TextDecoder('utf-8', { fatal: false });
-    return dec.decode(buf);
-  }
-  return file.text();
-}
