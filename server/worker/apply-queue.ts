@@ -51,10 +51,19 @@ export function getStatus() {
 }
 
 export function enqueue(items: QueueItem[]) {
-  status.queued.push(...items);
+  // If a previous run already finished, reset the queue to what the user just approved
+  if (!status.running) {
+    status.queued = [];
+    status.processed = 0;
+    status.batch_count = 0;
+  }
+  // Dedupe against what's already pending
+  const existingUrls = new Set(status.queued.map((q) => q.job_url));
+  const fresh = items.filter((i) => !existingUrls.has(i.job_url));
+  status.queued.push(...fresh);
   bus.emit({
     type: 'queued',
-    message: `${items.length} job(s) queued · total ${status.queued.length}`,
+    message: `${fresh.length} job(s) queued · total ${status.queued.length}`,
   });
 }
 
@@ -98,15 +107,22 @@ export async function run() {
       const prefs = loadState().preferences;
       const dailyLimit = prefs?.daily_limits?.[item.portal] ?? portalCfg.daily_limit_default;
 
+      // Apply-hour / weekend gates are OPT-IN. For personal single-user mode, default to no restriction.
+      // Set APPLY_HOUR_START + APPLY_HOUR_END in .env to enable the time window.
+      // Set SKIP_WEEKENDS=true in .env to enable the weekend pause.
+      const applyHours =
+        process.env.APPLY_HOUR_START !== undefined && process.env.APPLY_HOUR_END !== undefined
+          ? {
+              start: Number(process.env.APPLY_HOUR_START),
+              end: Number(process.env.APPLY_HOUR_END),
+            }
+          : undefined;
       const gate = checkGate({
         portal: item.portal,
         daily_limit: dailyLimit,
         min_gap_ms: portalCfg.min_gap_ms,
-        apply_hours: {
-          start: Number(process.env.APPLY_HOUR_START ?? 9),
-          end: Number(process.env.APPLY_HOUR_END ?? 18),
-        },
-        skip_weekends: process.env.SKIP_WEEKENDS !== 'false',
+        apply_hours: applyHours,
+        skip_weekends: process.env.SKIP_WEEKENDS === 'true',
       });
 
       if (!gate.ok) {
