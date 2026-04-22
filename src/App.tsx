@@ -4,6 +4,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { useAuth } from '@/stores/auth-store';
 import { usePreferences } from '@/stores/preference-store';
 import { seedIfEmpty } from '@/lib/db/seed';
+import { syncLocalToServer } from '@/lib/sync';
 
 import LoginPage from '@/pages/login';
 import DashboardPage from '@/pages/dashboard';
@@ -24,7 +25,10 @@ export default function App() {
   useEffect(() => {
     hydrate();
     seedIfEmpty();
-    loadPrefs();
+    loadPrefs().then(() => {
+      // Push local resume + prefs to server so the scrape/apply worker can use them
+      syncLocalToServer();
+    });
   }, [hydrate, loadPrefs]);
 
   if (!ready) return <BootSplash />;

@@ -12,7 +12,7 @@ export function getGemini(): GoogleGenerativeAI | null {
 
 export const geminiConfigured = Boolean(apiKey);
 
-export async function geminiJSON<T>(prompt: string, model = 'gemini-1.5-flash-latest'): Promise<T | null> {
+export async function geminiJSON<T>(prompt: string, model = 'gemini-2.5-flash'): Promise<T | null> {
   const g = getGemini();
   if (!g) return null;
   const m = g.getGenerativeModel({

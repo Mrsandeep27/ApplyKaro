@@ -11,7 +11,7 @@ export function getGemini() {
 
 export const geminiReady = Boolean(key);
 
-export async function geminiJSON<T>(prompt: string, model = 'gemini-1.5-flash-latest'): Promise<T | null> {
+export async function geminiJSON<T>(prompt: string, model = 'gemini-2.5-flash'): Promise<T | null> {
   const g = getGemini();
   if (!g) return null;
   try {
@@ -33,7 +33,7 @@ export async function geminiJSON<T>(prompt: string, model = 'gemini-1.5-flash-la
   }
 }
 
-export async function geminiText(prompt: string, model = 'gemini-1.5-flash-latest'): Promise<string | null> {
+export async function geminiText(prompt: string, model = 'gemini-2.5-flash'): Promise<string | null> {
   const g = getGemini();
   if (!g) return null;
   try {
