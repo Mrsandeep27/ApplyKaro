@@ -192,7 +192,9 @@ export async function applyToNaukri(
     // CAPTCHA / bot-check detection — look at the URL and VISIBLE page text, not raw HTML
     // (raw HTML always contains "recaptcha" as part of Google script references even on clean pages)
     const currentUrl = page.url();
-    const visibleText = await page.evaluate(() => document.body?.innerText ?? '').catch(() => '');
+    const visibleText = await page
+      .evaluate(new Function('return (document.body && document.body.innerText) || ""') as () => string)
+      .catch(() => '');
     const urlHit = /captcha|challenge|block|denied/i.test(currentUrl);
     const textHit =
       /please verify you are (a )?human|unusual activity|to continue, (please )?complete/i.test(
@@ -219,19 +221,21 @@ export async function applyToNaukri(
     const applyInfo = await findApplyButton(page);
     if (!applyInfo) {
       // Dump candidates found on the page so we know what to match against next time
-      const diag = await page.evaluate(() => {
-        const all = Array.from(document.querySelectorAll<HTMLElement>('*'));
-        const cands: string[] = [];
-        for (const el of all) {
-          const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-          if (!t || t.length > 60) continue;
-          if (/apply|applied/i.test(t) && cands.length < 20) {
-            const tag = el.tagName.toLowerCase();
-            cands.push(`${tag}: "${t}"`);
+      const diag = await page.evaluate(
+        new Function(`
+          const all = document.querySelectorAll('*');
+          const cands = [];
+          for (let i = 0; i < all.length; i++) {
+            const el = all[i];
+            const t = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+            if (!t || t.length > 60) continue;
+            if (/apply|applied/i.test(t) && cands.length < 20) {
+              cands.push(el.tagName.toLowerCase() + ': "' + t + '"');
+            }
           }
-        }
-        return cands;
-      });
+          return cands;
+        `) as () => string[],
+      );
       const diagMsg = diag.length ? ` · apply-text on page: ${diag.slice(0, 5).join(' | ')}` : '';
       onEvent?.({ type: 'skipped', message: `Apply button not found.${diagMsg}` });
       await new Promise((r) => setTimeout(r, 10_000));
@@ -328,73 +332,64 @@ export async function applyToNaukri(
 async function findApplyButton(
   page: Page,
 ): Promise<{ handle: unknown; text: string; candidates: string[] } | null> {
-  // Scan broadly — Naukri often uses <div>/<span> with onclick handlers instead of <button>.
-  // We look for any leaf-ish clickable whose visible text is close to "Apply".
-  const found = await page.evaluate(() => {
-    const isVisible = (el: Element) => {
-      const r = el.getBoundingClientRect();
-      if (r.width < 10 || r.height < 10) return false;
-      const style = window.getComputedStyle(el);
-      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) < 0.3)
-        return false;
-      return true;
-    };
+  // NOTE: keep this eval function self-contained and avoid named const-arrow functions.
+  // tsx/esbuild wraps those with __name(...) which doesn't exist inside the page context.
+  const found = await page.evaluate(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    new Function(`
+      const all = Array.from(document.querySelectorAll('*'));
+      const matches = [];
+      const candidates = [];
+      for (let i = 0; i < all.length; i++) {
+        const el = all[i];
+        // Visibility check (inlined)
+        const r = el.getBoundingClientRect();
+        if (r.width < 10 || r.height < 10) continue;
+        const st = window.getComputedStyle(el);
+        if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity) < 0.3) continue;
 
-    const all = Array.from(document.querySelectorAll<HTMLElement>('*'));
-    const matches: { text: string; tag: string; cls: string; index: number }[] = [];
-    const candidates: string[] = [];
+        const tag = el.tagName.toLowerCase();
+        const looksClickable =
+          tag === 'button' ||
+          tag === 'a' ||
+          el.getAttribute('role') === 'button' ||
+          el.hasAttribute('onclick') ||
+          st.cursor === 'pointer';
+        if (!looksClickable) continue;
 
-    for (let i = 0; i < all.length; i++) {
-      const el = all[i];
-      if (!isVisible(el)) continue;
+        const raw = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+        if (!raw || raw.length > 80) continue;
 
-      // Only consider elements that look clickable in some way
-      const tag = el.tagName.toLowerCase();
-      const looksClickable =
-        tag === 'button' ||
-        tag === 'a' ||
-        el.getAttribute('role') === 'button' ||
-        el.hasAttribute('onclick') ||
-        window.getComputedStyle(el).cursor === 'pointer';
-      if (!looksClickable) continue;
+        if (/apply|applied/i.test(raw) && candidates.length < 15) {
+          candidates.push(tag + ': "' + raw.slice(0, 60) + '"');
+        }
 
-      const raw = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!raw || raw.length > 80) continue;
+        if (/apply\\s*(filter|filters|coupon|now on company)/i.test(raw)) continue;
+        if (/send me jobs/i.test(raw)) continue;
 
-      // Capture a sample of "apply-ish" texts for diagnostics
-      if (/apply|applied/i.test(raw) && candidates.length < 15) {
-        candidates.push(`${tag}: "${raw.slice(0, 60)}"`);
+        if (/^\\s*applied\\s*$/i.test(raw)) {
+          matches.push({ text: raw, tag, index: i });
+        } else if (/^(apply|easy\\s*apply|quick\\s*apply|apply\\s*now)$/i.test(raw)) {
+          matches.push({ text: raw, tag, index: i });
+        }
       }
 
-      // Reject obvious non-matches
-      if (/apply\s*(filter|filters|coupon|now on company)/i.test(raw)) continue;
-      if (/send me jobs/i.test(raw)) continue;
-
-      // Accept "Applied" standalone → already applied
-      if (/^\s*applied\s*$/i.test(raw)) {
-        matches.push({ text: raw, tag, cls: el.className || '', index: i });
+      if (matches.length > 0) {
+        matches.sort(function (a, b) { return b.index - a.index; });
+        const best = matches[0];
+        const el = all[best.index];
+        const marker = '__ak_btn_' + Date.now();
+        el.setAttribute('data-ak-marker', marker);
+        return { text: best.text, marker: marker, candidates: candidates };
       }
-      // Accept Apply / Easy Apply / Quick Apply / Apply now (with possible icons/whitespace)
-      else if (/^(apply|easy\s*apply|quick\s*apply|apply\s*now)$/i.test(raw)) {
-        matches.push({ text: raw, tag, cls: el.className || '', index: i });
-      }
-    }
+      return { text: null, marker: null, candidates: candidates };
+    `) as () => { text: string | null; marker: string | null; candidates: string[] },
+  );
 
-    // Prefer the smallest element (innermost, closest to the actual click target)
-    if (matches.length > 0) {
-      matches.sort((a, b) => b.index - a.index); // later in DOM = likely more inner
-      const best = matches[0];
-      // Return a stable-ish path to re-fetch as a handle
-      const el = all[best.index];
-      const marker = `__ak_apply_btn_${Date.now()}`;
-      el.setAttribute('data-ak-marker', marker);
-      return { text: best.text, marker, candidates };
-    }
-
-    return { text: null, marker: null, candidates };
-  });
-
-  if (!found.marker || !found.text) return null;
+  if (!found.marker || !found.text) {
+    // Signal "no match" but return candidates for diagnostics
+    return null;
+  }
 
   const handle = await page.$(`[data-ak-marker="${found.marker}"]`);
   if (!handle) return null;
@@ -414,23 +409,27 @@ async function waitForApplyOutcome(page: Page, timeoutMs: number): Promise<Apply
   const startUrl = page.url();
   while (Date.now() < deadline) {
     const snap = await page
-      .evaluate(() => {
-        const body = document.body?.innerText ?? '';
-        const chatbot = document.querySelector(
-          '.chatbot-divBase, #chatbot_Drawer, [class*="chatbot"], [class*="questionBot"]',
-        );
-        const btn = Array.from(document.querySelectorAll('button, a')).find((el) => {
-          const t = (el.textContent || '').trim();
-          return /^\s*applied\s*$/i.test(t);
-        });
-        return {
-          body: body.slice(0, 4000),
-          hasChatbot: !!chatbot,
-          appliedBtn: btn ? (btn.textContent || '').trim() : null,
-          url: window.location.href,
-        };
-      })
-      .catch(() => ({ body: '', hasChatbot: false, appliedBtn: null, url: startUrl }));
+      .evaluate(
+        new Function(`
+          const body = (document.body && document.body.innerText) || '';
+          const chatbot = document.querySelector(
+            '.chatbot-divBase, #chatbot_Drawer, [class*="chatbot"], [class*="questionBot"]'
+          );
+          let appliedBtn = null;
+          const btns = document.querySelectorAll('button, a');
+          for (let i = 0; i < btns.length; i++) {
+            const t = (btns[i].textContent || '').trim();
+            if (/^\\s*applied\\s*$/i.test(t)) { appliedBtn = t; break; }
+          }
+          return {
+            body: body.slice(0, 4000),
+            hasChatbot: !!chatbot,
+            appliedBtn: appliedBtn,
+            url: window.location.href,
+          };
+        `) as () => { body: string; hasChatbot: boolean; appliedBtn: string | null; url: string },
+      )
+      .catch(() => ({ body: '', hasChatbot: false, appliedBtn: null as string | null, url: startUrl }));
 
     if (snap.hasChatbot) return { type: 'chatbot', evidence: 'chatbot drawer visible' };
     if (snap.appliedBtn) return { type: 'applied', evidence: `button text: ${snap.appliedBtn}` };
