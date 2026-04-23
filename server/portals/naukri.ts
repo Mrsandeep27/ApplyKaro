@@ -251,9 +251,25 @@ export async function applyToNaukri(
     const { handle: applyBtn, text: btnText } = applyInfo;
 
     // If the button already says "Applied", skip
-    if (/\bapplied\b/i.test(btnText) && !/\bapply\b/i.test(btnText)) {
+    if (/^applied$/i.test(btnText.trim())) {
       onEvent?.({ type: 'skipped', message: 'Already applied' });
       return { job_url: jobUrl, status: 'already_applied', duration_ms: Date.now() - start };
+    }
+
+    // "Apply on company site" → this will redirect to an external site we can't auto-fill.
+    // Skip cleanly so the worker moves on instead of hanging on an unknown form.
+    if (/on\s*company\s*site|external/i.test(btnText)) {
+      onEvent?.({
+        type: 'skipped',
+        message: `External apply required: "${btnText}" — Naukri redirects to employer site`,
+      });
+      return {
+        job_url: jobUrl,
+        status: 'skipped',
+        message: 'External apply (company site) — cannot auto-submit',
+        duration_ms: Date.now() - start,
+        screenshot: shotPath,
+      };
     }
 
     onEvent?.({ type: 'form_detected', message: `Button: "${btnText}"` });
@@ -350,16 +366,16 @@ async function findApplyButton(
 
         const tag = el.tagName.toLowerCase();
         const raw = (el.textContent || '').replace(/\\s+/g, ' ').trim();
-        if (!raw || raw.length > 60) continue;
+        if (!raw || raw.length > 40) continue;
 
-        // Must ONLY contain text "Apply" variants or "Applied" — no surrounding concatenated text
-        // (avoids "Send me jobs like thisApplied" false positives)
-        const isExactApply = /^(apply|easy\\s*apply|quick\\s*apply|apply\\s*now)$/i.test(raw);
+        // Starts with "Apply" (but not "Applied" as substring → handled separately)
+        // Covers: "Apply", "Apply now", "Apply on company site", "Easy Apply", "Quick Apply"
+        const startsWithApply = /^apply\\b/i.test(raw);
         const isExactApplied = /^applied$/i.test(raw);
-        if (!isExactApply && !isExactApplied) continue;
+        if (!startsWithApply && !isExactApplied) continue;
 
         // Reject negatives
-        if (/filter|filters|coupon|now on company/i.test(raw)) continue;
+        if (/filter|filters|coupon|clear|save|login|sign/i.test(raw)) continue;
 
         candidates.push(tag + ': "' + raw + '"');
 
@@ -385,6 +401,7 @@ async function findApplyButton(
           tag,
           index: all.indexOf(clickTarget),
           isApplied: isExactApplied,
+          isExternal: /on\\s*company\\s*site|external/i.test(raw),
         });
       }
 
