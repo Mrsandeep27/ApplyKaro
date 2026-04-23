@@ -335,52 +335,72 @@ async function findApplyButton(
   // NOTE: keep this eval function self-contained and avoid named const-arrow functions.
   // tsx/esbuild wraps those with __name(...) which doesn't exist inside the page context.
   const found = await page.evaluate(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     new Function(`
       const all = Array.from(document.querySelectorAll('*'));
       const matches = [];
       const candidates = [];
+
       for (let i = 0; i < all.length; i++) {
         const el = all[i];
-        // Visibility check (inlined)
+        // Visibility
         const r = el.getBoundingClientRect();
         if (r.width < 10 || r.height < 10) continue;
         const st = window.getComputedStyle(el);
         if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity) < 0.3) continue;
 
         const tag = el.tagName.toLowerCase();
-        const looksClickable =
-          tag === 'button' ||
-          tag === 'a' ||
-          el.getAttribute('role') === 'button' ||
-          el.hasAttribute('onclick') ||
-          st.cursor === 'pointer';
-        if (!looksClickable) continue;
-
         const raw = (el.textContent || '').replace(/\\s+/g, ' ').trim();
-        if (!raw || raw.length > 80) continue;
+        if (!raw || raw.length > 60) continue;
 
-        if (/apply|applied/i.test(raw) && candidates.length < 15) {
-          candidates.push(tag + ': "' + raw.slice(0, 60) + '"');
+        // Must ONLY contain text "Apply" variants or "Applied" — no surrounding concatenated text
+        // (avoids "Send me jobs like thisApplied" false positives)
+        const isExactApply = /^(apply|easy\\s*apply|quick\\s*apply|apply\\s*now)$/i.test(raw);
+        const isExactApplied = /^applied$/i.test(raw);
+        if (!isExactApply && !isExactApplied) continue;
+
+        // Reject negatives
+        if (/filter|filters|coupon|now on company/i.test(raw)) continue;
+
+        candidates.push(tag + ': "' + raw + '"');
+
+        // Prefer: the tightest visible ancestor that is actually clickable.
+        // Walk up up to 4 levels looking for a clickable wrapper.
+        let clickTarget = el;
+        for (let depth = 0; depth < 4; depth++) {
+          const t = clickTarget.tagName.toLowerCase();
+          const cs = window.getComputedStyle(clickTarget);
+          const clickable =
+            t === 'button' ||
+            t === 'a' ||
+            clickTarget.getAttribute('role') === 'button' ||
+            clickTarget.hasAttribute('onclick') ||
+            cs.cursor === 'pointer';
+          if (clickable) break;
+          if (!clickTarget.parentElement) break;
+          clickTarget = clickTarget.parentElement;
         }
 
-        if (/apply\\s*(filter|filters|coupon|now on company)/i.test(raw)) continue;
-        if (/send me jobs/i.test(raw)) continue;
-
-        if (/^\\s*applied\\s*$/i.test(raw)) {
-          matches.push({ text: raw, tag, index: i });
-        } else if (/^(apply|easy\\s*apply|quick\\s*apply|apply\\s*now)$/i.test(raw)) {
-          matches.push({ text: raw, tag, index: i });
-        }
+        matches.push({
+          text: raw,
+          tag,
+          index: all.indexOf(clickTarget),
+          isApplied: isExactApplied,
+        });
       }
 
       if (matches.length > 0) {
-        matches.sort(function (a, b) { return b.index - a.index; });
+        // Prefer "Applied" matches when visible (existing applied state signals we should skip)
+        matches.sort(function (a, b) {
+          if (a.isApplied !== b.isApplied) return a.isApplied ? -1 : 1;
+          return b.index - a.index;
+        });
         const best = matches[0];
         const el = all[best.index];
-        const marker = '__ak_btn_' + Date.now();
-        el.setAttribute('data-ak-marker', marker);
-        return { text: best.text, marker: marker, candidates: candidates };
+        if (el) {
+          const marker = '__ak_btn_' + Date.now();
+          el.setAttribute('data-ak-marker', marker);
+          return { text: best.text, marker: marker, candidates: candidates };
+        }
       }
       return { text: null, marker: null, candidates: candidates };
     `) as () => { text: string | null; marker: string | null; candidates: string[] },
