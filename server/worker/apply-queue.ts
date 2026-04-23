@@ -163,7 +163,16 @@ export async function run() {
           message: 'Applied successfully',
         });
       } else if (result.status === 'already_applied') {
-        bus.emit({ type: 'skipped', job_id: item.job_id, message: 'Already applied' });
+        // Count it as processed so it doesn't stay in "approved" forever on the client.
+        status.processed += 1;
+        // Treat this like a success from the PWA's perspective so the match stops
+        // being requeued on every Start click.
+        bus.emit({
+          type: 'success',
+          job_id: item.job_id,
+          portal: item.portal,
+          message: 'Already applied (previously)',
+        });
       } else if (result.status === 'captcha') {
         bus.emit({ type: 'captcha', job_id: item.job_id, message: result.message });
         // Stop and requeue item for when user resumes
