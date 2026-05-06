@@ -223,7 +223,7 @@ export async function applyToNaukri(
 
     const applyInfo = await findApplyButton(page);
     if (!applyInfo) {
-      // Dump candidates found on the page so we know what to match against next time
+      // Dump candidates so we know what's actually on the page
       const diag = await page.evaluate(
         new Function(`
           const all = document.querySelectorAll('*');
@@ -239,13 +239,19 @@ export async function applyToNaukri(
           return cands;
         `) as () => string[],
       );
-      const diagMsg = diag.length ? ` · apply-text on page: ${diag.slice(0, 5).join(' | ')}` : '';
-      onEvent?.({ type: 'skipped', message: `Apply button not found.${diagMsg}` });
-      await new Promise((r) => setTimeout(r, 10_000));
+
+      // If the only apply-text on the page is the app-promo "Apply on the go", call it out clearly.
+      const onlyAppPromo = diag.length > 0 && diag.every((c) => /on\s*the\s*go|via\s*app|mobile/i.test(c));
+      const reason = onlyAppPromo
+        ? 'App-only listing (Naukri requires mobile app to apply) — skipped'
+        : `Apply button not found.${diag.length ? ' Saw: ' + diag.slice(0, 4).join(' | ') : ''}`;
+
+      onEvent?.({ type: 'skipped', message: reason });
+      await new Promise((r) => setTimeout(r, 5_000));
       return {
         job_url: jobUrl,
         status: 'skipped',
-        message: `Apply button not found on ${currentUrl}${diagMsg}`,
+        message: reason,
         duration_ms: Date.now() - start,
         screenshot: shotPath,
       };
