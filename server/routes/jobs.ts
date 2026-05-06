@@ -82,14 +82,12 @@ jobsRouter.post('/scrape', async (req, res) => {
 
   const kept = scored.filter((j) => (j.match?.score ?? 0) >= threshold);
 
-  // Merge with existing, newest first, dedupe
-  const existing = readJobs();
-  const keyed = new Map(existing.map((e) => [e.id, e]));
-  for (const j of kept) keyed.set(j.id, j);
-  const merged = [...keyed.values()]
-    .sort((a, b) => (new Date(b.scraped_at).getTime()) - (new Date(a.scraped_at).getTime()))
-    .slice(0, 500);
-  writeJobs(merged);
+  // Replace the stored job list with this scrape's results (no append-and-stack).
+  // The client preserves approved/applied state via its own match/application tables.
+  const sorted = kept.sort(
+    (a, b) => new Date(b.scraped_at).getTime() - new Date(a.scraped_at).getTime(),
+  );
+  writeJobs(sorted);
 
   bus.emit({
     type: 'done',

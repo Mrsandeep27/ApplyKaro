@@ -26,11 +26,30 @@ export default function JobsPage() {
     setScrapeResult('Scraping… Naukri search + Gemini matching takes 30-90s. Don\'t close the tab.');
     try {
       const result = await api.scrapeJobs();
-      setScrapeResult(
-        `Scraped ${result.found} found · ${result.unique} unique · kept ${result.kept} ≥${result.threshold}% · (timestamps refreshed for any duplicates)`,
-      );
-      // Pull the enriched job list and mirror into Dexie so the existing UI renders
       const fresh = await api.getJobs();
+
+      // Build the set of job ids returned by this scrape — anything currently in
+      // "queued" status that's NOT in this set is stale and gets removed below.
+      const freshIds = new Set(fresh.jobs.map((j) => j.id));
+
+      // 1. Drop stale queued matches (untouched by you). Approved / applied / saved stay.
+      const queuedMatches = await db.matches.where('status').equals('queued').toArray();
+      const staleMatches = queuedMatches.filter((m) => !freshIds.has(m.job_id));
+      if (staleMatches.length > 0) {
+        await db.matches.bulkDelete(staleMatches.map((m) => m.id));
+      }
+
+      // 2. Drop orphan job records (no matches referencing them, no applications)
+      const staleJobIds = Array.from(new Set(staleMatches.map((m) => m.job_id)));
+      for (const jobId of staleJobIds) {
+        const matchRefs = await db.matches.where('job_id').equals(jobId).count();
+        const appRefs = await db.applications.where('job_id').equals(jobId).count();
+        if (matchRefs === 0 && appRefs === 0) {
+          await db.jobs.delete(jobId);
+        }
+      }
+
+      // 3. Upsert the fresh batch
       for (const j of fresh.jobs) {
         const job: Job = {
           id: j.id,
@@ -47,7 +66,6 @@ export default function JobsPage() {
           job_type: j.job_type,
           scraped_at: j.scraped_at,
         };
-        // Always upsert so scraped_at refreshes (was: only inserted if missing → "1w ago" forever)
         await db.jobs.put(job);
 
         if (j.match) {
@@ -67,7 +85,6 @@ export default function JobsPage() {
               created_at: new Date().toISOString(),
             });
           } else if (existingMatch.status === 'queued' || existingMatch.status === 'saved') {
-            // Refresh score/skills if we haven't acted on it yet
             await db.matches.update(existingMatch.id, {
               score: j.match.score,
               matching_skills: j.match.matching_skills,
@@ -78,6 +95,10 @@ export default function JobsPage() {
           }
         }
       }
+
+      setScrapeResult(
+        `Scraped ${result.found} · ${result.unique} unique · kept ${result.kept} ≥${result.threshold}% · removed ${staleMatches.length} stale`,
+      );
     } catch (err) {
       setScrapeResult(err instanceof Error ? err.message : 'Scrape failed');
     } finally {
