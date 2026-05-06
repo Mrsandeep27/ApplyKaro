@@ -56,8 +56,11 @@ function buildSearchUrl(keywords: string, location: string) {
     .toLowerCase()
     .replace(/\s+/g, '-')
     .replace(/[^a-z0-9-]/g, '');
-  if (l === 'remote' || l === 'any') return `https://www.naukri.com/${k}-jobs?wfhType=1`;
-  return `https://www.naukri.com/${k}-jobs-in-${l}`;
+  // Sort by date (newest first) so re-scrapes surface fresh listings instead of the same top hits.
+  // Also include the last 7 days filter so we don't keep grabbing month-old posts.
+  const params = '?sort=p&jobAge=7';
+  if (l === 'remote' || l === 'any') return `https://www.naukri.com/${k}-jobs${params}&wfhType=1`;
+  return `https://www.naukri.com/${k}-jobs-in-${l}${params}`;
 }
 
 export async function scrapeNaukri(queries: { keywords: string; location: string }[], maxPerQuery = 20): Promise<ScrapedJob[]> {

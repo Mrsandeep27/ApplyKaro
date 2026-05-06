@@ -57,17 +57,48 @@ function clamp(r: MatchOutput): MatchOutput {
 }
 
 function heuristic(i: MatchInput): MatchOutput {
-  const resume = new Set(i.resume_skills.map((s) => s.toLowerCase()));
-  const required = i.job_skills.map((s) => s.toLowerCase());
-  const matching = required.filter((s) => resume.has(s));
+  const resume = new Set(i.resume_skills.map((s) => s.toLowerCase().trim()));
+  const required = i.job_skills.map((s) => s.toLowerCase().trim());
+
+  // Also extract skills mentioned anywhere in the job description
+  const desc = (i.job_description + ' ' + i.job_title).toLowerCase();
+  const skillsFromDesc = Array.from(resume).filter((s) => {
+    if (s.length < 2) return false;
+    const re = new RegExp(`\\b${s.replace(/[.+*?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    return re.test(desc);
+  });
+
+  // Combine explicit job_skills matches with skills found in description
+  const allMatched = new Set([
+    ...required.filter((s) => resume.has(s)),
+    ...skillsFromDesc,
+  ]);
+  const matching = Array.from(allMatched);
   const missing = required.filter((s) => !resume.has(s));
-  const bonus = [...resume].filter((s) => !required.includes(s)).slice(0, 6);
-  const score = required.length ? Math.round((matching.length / required.length) * 100) : 60;
+  const bonus = Array.from(resume).filter((s) => !required.includes(s) && !skillsFromDesc.includes(s)).slice(0, 6);
+
+  // Be generous when AI is unavailable — we'd rather show too many than too few.
+  // Score = (skill matches × 8, capped at 60) + title relevance bonus
+  let score = Math.min(60, matching.length * 12);
+  // Title bonus: if any resume skill appears in the job title, +25
+  const titleHit = Array.from(resume).some((s) => i.job_title.toLowerCase().includes(s));
+  if (titleHit) score += 25;
+  // Floor at 50 if we have any matches at all (so heuristic-only doesn't filter everything out)
+  if (matching.length > 0 && score < 55) score = 55;
+  // Default for total uncertainty
+  if (matching.length === 0 && score < 40) score = 40;
+  score = Math.min(95, score);
+
   return {
     score,
     matching_skills: matching,
-    missing_skills: missing,
+    missing_skills: missing.slice(0, 8),
     bonus_skills: bonus,
-    reasoning: matching.length >= 3 ? `Strong overlap: ${matching.slice(0, 3).join(', ')}` : 'Limited overlap with required skills',
+    reasoning:
+      matching.length >= 3
+        ? `Strong overlap: ${matching.slice(0, 3).join(', ')} (heuristic — AI quota hit)`
+        : matching.length > 0
+          ? `Some overlap: ${matching.join(', ')} (heuristic — AI quota hit)`
+          : 'No keyword overlap detected (heuristic — AI quota hit)',
   };
 }

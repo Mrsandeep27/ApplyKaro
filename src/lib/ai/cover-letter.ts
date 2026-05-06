@@ -30,7 +30,7 @@ export async function generateCoverLetter(
 ): Promise<string> {
   if (!geminiConfigured) return stubLetter(resume, job);
   try {
-    const g = getGemini()!.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const g = getGemini()!.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
     const res = await g.generateContent(PROMPT(resume, job, tone));
     return res.response.text().trim();
   } catch (err) {

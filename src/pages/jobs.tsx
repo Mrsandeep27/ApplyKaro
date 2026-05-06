@@ -23,33 +23,37 @@ export default function JobsPage() {
 
   async function runScrape() {
     setScraping(true);
-    setScrapeResult(null);
+    setScrapeResult('Scraping… Naukri search + Gemini matching takes 30-90s. Don\'t close the tab.');
     try {
       const result = await api.scrapeJobs();
-      setScrapeResult(`Scraped ${result.found} · kept ${result.kept} ≥${result.threshold}%`);
+      setScrapeResult(
+        `Scraped ${result.found} found · ${result.unique} unique · kept ${result.kept} ≥${result.threshold}% · (timestamps refreshed for any duplicates)`,
+      );
       // Pull the enriched job list and mirror into Dexie so the existing UI renders
       const fresh = await api.getJobs();
       for (const j of fresh.jobs) {
-        const exists = await db.jobs.get(j.id);
-        if (!exists) {
-          const job: Job = {
-            id: j.id,
-            portal: j.portal as PortalSlug,
-            portal_job_id: j.portal_job_id,
-            title: j.title,
-            company: j.company,
-            location: j.location,
-            salary_min: j.salary_min ?? null,
-            salary_max: j.salary_max ?? null,
-            description: j.description,
-            skills: j.skills,
-            job_url: j.job_url,
-            job_type: j.job_type,
-            scraped_at: j.scraped_at,
-          };
-          await db.jobs.add(job);
-          if (j.match) {
-            const m: Match = {
+        const job: Job = {
+          id: j.id,
+          portal: j.portal as PortalSlug,
+          portal_job_id: j.portal_job_id,
+          title: j.title,
+          company: j.company,
+          location: j.location,
+          salary_min: j.salary_min ?? null,
+          salary_max: j.salary_max ?? null,
+          description: j.description,
+          skills: j.skills,
+          job_url: j.job_url,
+          job_type: j.job_type,
+          scraped_at: j.scraped_at,
+        };
+        // Always upsert so scraped_at refreshes (was: only inserted if missing → "1w ago" forever)
+        await db.jobs.put(job);
+
+        if (j.match) {
+          const existingMatch = await db.matches.where('job_id').equals(j.id).first();
+          if (!existingMatch) {
+            await db.matches.add({
               id: uid('m'),
               user_id: 'local',
               job_id: j.id,
@@ -61,8 +65,16 @@ export default function JobsPage() {
               reasoning: j.match.reasoning,
               status: 'queued',
               created_at: new Date().toISOString(),
-            };
-            await db.matches.add(m);
+            });
+          } else if (existingMatch.status === 'queued' || existingMatch.status === 'saved') {
+            // Refresh score/skills if we haven't acted on it yet
+            await db.matches.update(existingMatch.id, {
+              score: j.match.score,
+              matching_skills: j.match.matching_skills,
+              missing_skills: j.match.missing_skills,
+              bonus_skills: j.match.bonus_skills,
+              reasoning: j.match.reasoning,
+            });
           }
         }
       }
