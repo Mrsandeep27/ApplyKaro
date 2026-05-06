@@ -173,12 +173,25 @@ export async function run() {
           portal: item.portal,
           message: 'Already applied (previously)',
         });
+      } else if (result.status === 'skipped') {
+        // Terminal skip — job genuinely can't be auto-applied (app-only listing,
+        // external company-site redirect, employer chatbot questions, no apply button).
+        // Emit "unappliable" so the client marks the match as skipped permanently
+        // and stops requeuing it on every Start click.
+        status.processed += 1;
+        bus.emit({
+          type: 'unappliable',
+          job_id: item.job_id,
+          portal: item.portal,
+          message: result.message ?? 'Cannot auto-apply — skipped permanently',
+        });
       } else if (result.status === 'captcha') {
         bus.emit({ type: 'captcha', job_id: item.job_id, message: result.message });
-        // Stop and requeue item for when user resumes
+        // Stop and requeue for when user resumes
         status.queued.unshift(item);
         break;
       } else {
+        // True transient error — leave in queue, will retry on next Start
         bus.emit({ type: 'error', job_id: item.job_id, message: result.message });
       }
 

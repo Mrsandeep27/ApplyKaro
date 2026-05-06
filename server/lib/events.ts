@@ -11,6 +11,7 @@ export interface ApplyEvent {
     | 'submitted'
     | 'success'
     | 'skipped'
+    | 'unappliable' // terminal — job permanently can't be auto-applied (app-only, external, etc.)
     | 'captcha'
     | 'rate_limited'
     | 'error'

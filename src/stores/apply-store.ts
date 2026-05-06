@@ -58,6 +58,11 @@ export const useApply = create<ApplyState>((set, get) => ({
         recordApplied(e);
         set((s) => ({ processed: s.processed + 1 }));
       }
+      if (e.type === 'unappliable' && e.job_id) {
+        // Permanent skip — mark match so it never re-queues, but don't create an Application row
+        recordUnappliable(e);
+        set((s) => ({ processed: s.processed + 1 }));
+      }
       if (e.type === 'rate_limited' || e.type === 'captcha' || e.type === 'error') {
         set({ lastError: e.message ?? null });
       }
@@ -144,6 +149,15 @@ export const useApply = create<ApplyState>((set, get) => ({
     set({ running: false, paused: false, currentMatchId: null });
   },
 }));
+
+async function recordUnappliable(e: ApplyEvent) {
+  const jobId = e.job_id;
+  if (!jobId) return;
+  const match = await db.matches.where('job_id').equals(jobId).first();
+  if (match) {
+    await db.matches.update(match.id, { status: 'skipped' });
+  }
+}
 
 async function recordApplied(e: ApplyEvent) {
   const jobId = e.job_id;
