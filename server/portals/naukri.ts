@@ -377,8 +377,15 @@ async function findApplyButton(
         const isExactApplied = /^applied$/i.test(raw);
         if (!startsWithApply && !isExactApplied) continue;
 
-        // Reject negatives
-        if (/filter|filters|coupon|clear|save|login|sign/i.test(raw)) continue;
+        // Reject obvious non-apply buttons
+        // "Apply on the go" / "Apply via app" = Naukri's app-download promo, NOT real apply
+        // "Apply filters" / "Apply coupon" = settings buttons
+        if (
+          /filter|filters|coupon|clear/i.test(raw) ||
+          /^save$|^login$|^sign\s|^cancel$/i.test(raw) ||
+          /on\s*the\s*go|via\s*app|in\s*app|download|get\s*app|on\s*mobile/i.test(raw)
+        )
+          continue;
 
         candidates.push(tag + ': "' + raw + '"');
 
