@@ -19,6 +19,7 @@ const STATUS_TONES: Record<ApplicationStatus, string> = {
   offer: 'chip-green',
   rejected: 'chip-red',
   ghosted: 'chip-red',
+  skipped: 'chip-ink',
   error: 'chip-red',
 };
 
