@@ -157,6 +157,23 @@ async function recordUnappliable(e: ApplyEvent) {
   if (match) {
     await db.matches.update(match.id, { status: 'skipped' });
   }
+  // Also record an Application row with status='skipped' so it shows in Tracker/Stats.
+  // Don't create one for already-applied (those go through recordApplied).
+  const existing = await db.applications.where('job_id').equals(jobId).first();
+  const now = new Date().toISOString();
+  if (existing) return;
+  const job = await db.jobs.get(jobId);
+  await db.applications.add({
+    id: uid('app'),
+    job_id: jobId,
+    match_id: match?.id,
+    portal: (job?.portal ?? (e.portal as PortalSlug | undefined) ?? 'naukri') as PortalSlug,
+    status: 'skipped',
+    notes: e.message,
+    follow_up_count: 0,
+    created_at: now,
+    updated_at: now,
+  });
 }
 
 async function recordApplied(e: ApplyEvent) {

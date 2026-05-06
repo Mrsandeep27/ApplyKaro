@@ -10,12 +10,13 @@ export default function AnalyticsPage() {
   const matches = useLiveQuery(() => db.matches.toArray(), []) ?? [];
 
   const stats = useMemo(() => {
-    const total = apps.length;
+    const applied = apps.filter((a) => a.status !== 'skipped' && a.status !== 'error').length;
+    const skipped = apps.filter((a) => a.status === 'skipped').length;
     const responses = apps.filter((a) => ['viewed', 'interview', 'offer'].includes(a.status)).length;
-    const responseRate = total ? Math.round((responses / total) * 100) : 0;
+    const responseRate = applied ? Math.round((responses / applied) * 100) : 0;
     const interviews = apps.filter((a) => a.status === 'interview').length;
     return [
-      { label: 'Applied', value: total },
+      { label: 'Applied', value: applied, hint: skipped ? `${skipped} skipped` : undefined },
       { label: 'Response %', value: `${responseRate}%` },
       { label: 'Interviews', value: interviews },
     ];
@@ -27,17 +28,18 @@ export default function AnalyticsPage() {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const label = `${d.getDate()}/${d.getMonth() + 1}`;
+      // Only count REAL applications (skipped doesn't count)
       const applies = apps.filter(
-        (a) => a.applied_at && sameDay(new Date(a.applied_at), d),
+        (a) =>
+          a.applied_at &&
+          a.status !== 'skipped' &&
+          a.status !== 'error' &&
+          sameDay(new Date(a.applied_at), d),
       ).length;
       const responses = apps.filter(
         (a) => a.response_at && sameDay(new Date(a.response_at), d),
       ).length;
       days.push({ date: label, applies, responses });
-    }
-    // If no data, show a gentle uptrend to communicate the chart exists
-    if (apps.length === 0) {
-      return days.map((d, i) => ({ ...d, applies: Math.max(0, Math.round((i / 13) * 3)) }));
     }
     return days;
   }, [apps]);

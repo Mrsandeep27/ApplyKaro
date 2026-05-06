@@ -116,6 +116,7 @@ export type ApplicationStatus =
   | 'offer'
   | 'rejected'
   | 'ghosted'
+  | 'skipped'
   | 'error';
 
 export interface Application {
