@@ -29,14 +29,20 @@ export async function generateCoverLetter(
   tone: CoverLetterTone = 'professional',
 ): Promise<string> {
   if (!geminiConfigured) return stubLetter(resume, job);
-  try {
-    const g = getGemini()!.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
-    const res = await g.generateContent(PROMPT(resume, job, tone));
-    return res.response.text().trim();
-  } catch (err) {
-    console.error('Cover letter generation failed; using stub', err);
-    return stubLetter(resume, job);
+  // Try a chain of models so a single one running out of quota doesn't break the feature
+  const models = ['gemini-2.5-flash-lite', 'gemini-flash-latest', 'gemini-2.5-flash'];
+  for (const m of models) {
+    try {
+      const g = getGemini()!.getGenerativeModel({ model: m });
+      const res = await g.generateContent(PROMPT(resume, job, tone));
+      return res.response.text().trim();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/\b(429|503|quota)\b/i.test(msg)) continue;
+      console.error(`Cover letter ${m} failed:`, msg.slice(0, 120));
+    }
   }
+  return stubLetter(resume, job);
 }
 
 function stubLetter(resume: ParsedResume, job: Job): string {
